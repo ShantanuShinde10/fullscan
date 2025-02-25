@@ -1,4 +1,4 @@
-name: GitHub Advanced Security Scans
+name: Security Scanning & Issue Creation
 
 on:
   push:
@@ -11,9 +11,9 @@ on:
     - cron: '0 0 * * *'  # Runs daily
 
 permissions:
-  security-events: write
-  contents: read
-  issues: write  # Required for issue creation
+  security-events: write  # Allows uploading security reports
+  contents: read          # Allows scanning repo contents
+  issues: write           # Enables issue creation for alerts
 
 jobs:
   security-scan:
@@ -24,32 +24,41 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ✅ Step 1: Initialize GitHub CodeQL
-      - name: Initialize GitHub CodeQL
+      # 🔹 Trivy Vulnerability Scanner
+      - name: Run Trivy Scanner
+        uses: aquasecurity/trivy-action@0.11.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy Scan Results to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      # 🔹 CodeQL Code Scanning
+      - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: javascript, python, java  # Change based on your project
-          
+          languages: python  # Ensure only relevant languages are scanned
 
-      # ✅ Step 2: Perform Code Scanning
-      - name: Run GitHub Code Scanning (CodeQL)
+      - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          output: results
           upload: always
           cleanup-level: brutal
-          add-snippets: false
-          skip-queries: false
-          upload-database: true
           wait-for-processing: true
-          token: ${{ secrets.GH_PAT }}
 
-      # 🔹 Step 3: Fetch Dependabot Alerts & Create Issues
+      # 🔹 Create Issues for Dependabot Alerts
       - name: Fetch Dependabot Alerts & Create Issues
         run: |
           DEPENDABOT_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/dependabot/alerts")
 
+          echo "Fetched Dependabot Alerts:"
           echo "$DEPENDABOT_ALERTS" | jq .
 
           echo "$DEPENDABOT_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
@@ -58,19 +67,48 @@ jobs:
             ALERT_URL=$(echo "$alert" | jq -r '.html_url')
 
             if [[ -n "$PACKAGE_NAME" && -n "$SEVERITY" && -n "$ALERT_URL" ]]; then
+              echo "Creating GitHub Issue for $PACKAGE_NAME..."
               curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 -d "{\"title\":\"[Dependabot] Security Issue: $PACKAGE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"dependabot\"]}" \
                 "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
             fi
           done
 
-      # 🔹 Step 4: Fetch Secret Scanning Alerts & Create Issues
+      # 🔹 Create Issues for Code Scanning Alerts
+      - name: Fetch Code Scanning Alerts & Create Issues
+        run: |
+          CODE_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts")
+
+          echo "Fetched Code Scanning Alerts:"
+          echo "$CODE_SCANNING_ALERTS" | jq .
+
+          echo "$CODE_SCANNING_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
+            RULE_NAME=$(echo "$alert" | jq -r '.rule.name')
+            SEVERITY=$(echo "$alert" | jq -r '.rule.severity')
+            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
+
+            if [[ -n "$RULE_NAME" && -n "$SEVERITY" && -n "$ALERT_URL" ]]; then
+              echo "Creating GitHub Issue for $RULE_NAME..."
+              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -d "{\"title\":\"[Code Scanning] $RULE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"code-scanning\"]}" \
+                "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
+            fi
+          done
+
+      # 🔹 Create Issues for Secret Scanning Alerts
       - name: Fetch Secret Scanning Alerts & Create Issues
         run: |
           SECRET_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts")
 
+          echo "Fetched Secret Scanning Alerts:"
           echo "$SECRET_ALERTS" | jq .
 
           echo "$SECRET_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
@@ -78,9 +116,12 @@ jobs:
             ALERT_URL=$(echo "$alert" | jq -r '.html_url')
 
             if [[ -n "$SECRET_TYPE" && -n "$ALERT_URL" ]]; then
+              echo "Creating GitHub Issue for Secret Scanning Alert..."
               curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Secret Scanning] Exposed Secret: $SECRET_TYPE\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"secret-scanning\"]}" \
+                -d "{\"title\":\"[Secret Scanning] Exposed Secret Detected ($SECRET_TYPE)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"secret-scanning\"]}" \
                 "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
             fi
           done
