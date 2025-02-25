@@ -1,0 +1,68 @@
+name: Trivy & Security Alerts with Issue Creation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily
+
+permissions:
+  security-events: write  # Upload SARIF reports
+  contents: read          # Scan repo contents
+  issues: write           # Create GitHub issues
+
+jobs:
+  security-scan:
+    name: Run Security Scans & Create Issues
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.11.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy Scan Results to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+
+      # 🔹 Create Issues for Dependabot Alerts
+      - name: Fetch Dependabot Alerts & Create Issues
+        run: |
+          # Fetch Dependabot alerts from GitHub API
+          DEPENDABOT_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
+            "https://api.github.com/repos/${{ github.repository }}/dependabot/alerts")
+
+          echo "Fetched Dependabot Alerts:"
+          echo "$DEPENDABOT_ALERTS" | jq .
+
+          # Loop through alerts and create GitHub issues
+          echo "$DEPENDABOT_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
+            PACKAGE_NAME=$(echo "$alert" | jq -r '.dependency.package.name')
+            SEVERITY=$(echo "$alert" | jq -r '.security_vulnerability.severity')
+            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
+
+            # Ensure values are not empty before creating an issue
+            if [[ -n "$PACKAGE_NAME" && -n "$SEVERITY" && -n "$ALERT_URL" ]]; then
+              echo "Creating GitHub Issue for $PACKAGE_NAME..."
+              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -d "{\"title\":\"[Dependabot] Security Issue: $PACKAGE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"dependabot\"]}" \
+                "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
+            fi
+          done
