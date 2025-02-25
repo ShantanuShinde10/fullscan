@@ -1,0 +1,15 @@
+{
+  "name": "vulnerable-app",
+  "version": "1.0.0",
+  "description": "A test Node.js app with outdated dependencies",
+  "main": "server.js",
+  "dependencies": {
+    "express": "4.16.1",
+    "lodash": "4.17.11"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Test",
+  "license": "ISC"
+}
