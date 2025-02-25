@@ -16,29 +16,30 @@ permissions:
 
 jobs:
   codeql-scan:
-    name: Run CodeQL Analysis
+    name: Run CodeQL Analysis (Python)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      ## 🔹 Set up Java (Only if your project includes Java)
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      ## 🔹 Set up Python environment
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          python-version: '3.x'  # Use the required Python version
 
-      - name: Build Java Project (if applicable)
-        run: mvn clean install -DskipTests || echo "Build failed, skipping tests"
-        continue-on-error: true
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
 
-      ## 🔹 Initialize CodeQL for Code Scanning
+      ## 🔹 Initialize CodeQL for Python
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: java, python  # Adjust for your repository's languages
+          languages: python
 
       ## 🔹 Perform CodeQL Analysis
       - name: Perform CodeQL Analysis
@@ -48,4 +49,4 @@ jobs:
       - name: Upload CodeQL Scan Results
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: '../results/java.sarif'  # Adjust if multiple languages
+          sarif_file: '../results/python.sarif'  # Adjust if necessary
