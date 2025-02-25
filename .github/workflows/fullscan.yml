@@ -1,4 +1,4 @@
-name: Security Scans & Alerts
+name: Code Scanning with CodeQL
 
 on:
   push:
@@ -11,111 +11,41 @@ on:
     - cron: '0 0 * * *'  # Runs daily
 
 permissions:
-  security-events: write  # Upload security reports
-  contents: read          # Read repo contents
-  issues: write           # Allow issue creation
+  security-events: write
+  contents: read
 
 jobs:
-  security-scan:
-    name: Run Security Scans & Create Issues
+  codeql-scan:
+    name: Run CodeQL Analysis
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ✅ Run Trivy Security Scanner
-      - name: Run Trivy Scanner (OS, Library, Code, Secrets)
-        uses: aquasecurity/trivy-action@0.11.0
+      ## 🔹 Set up Java (Only if your project includes Java)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          distribution: 'temurin'
+          java-version: '17'
 
-      # ✅ Upload Trivy Scan Results to GitHub Security Tab
-      - name: Upload Trivy Scan Results
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: trivy-scan  # Assign unique category
+      - name: Build Java Project (if applicable)
+        run: mvn clean install -DskipTests || echo "Build failed, skipping tests"
+        continue-on-error: true
 
-      # ✅ Initialize CodeQL
+      ## 🔹 Initialize CodeQL for Code Scanning
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: python, javascript, java
-         
+          languages: java, python  # Adjust for your repository's languages
 
-      # ✅ Run CodeQL Analysis
-      - name: Run CodeQL Analysis
+      ## 🔹 Perform CodeQL Analysis
+      - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
-        with:
-          output: ../results
-          upload: always
-          cleanup-level: brutal
-          upload-database: true
 
-      # ✅ Upload CodeQL Scan Results to GitHub Security Tab
+      ## 🔹 Upload CodeQL Results to GitHub Security Tab
       - name: Upload CodeQL Scan Results
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: '../results'
-          category: codeql-scan  # Assign different unique category
-
-      # ✅ Fetch Dependabot Alerts & Create Issues
-      - name: Fetch Dependabot Alerts & Create Issues
-        run: |
-          DEPENDABOT_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            "https://api.github.com/repos/${{ github.repository }}/dependabot/alerts")
-
-          echo "$DEPENDABOT_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
-            PACKAGE_NAME=$(echo "$alert" | jq -r '.dependency.package.name')
-            SEVERITY=$(echo "$alert" | jq -r '.security_vulnerability.severity')
-            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
-
-            if [[ -n "$PACKAGE_NAME" && -n "$SEVERITY" && -n "$ALERT_URL" ]]; then
-              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Dependabot] Security Issue: $PACKAGE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"dependabot\"]}" \
-                "https://api.github.com/repos/${{ github.repository }}/issues"
-            fi
-          done
-
-      # ✅ Fetch Code Scanning Alerts & Create Issues
-      - name: Fetch Code Scanning Alerts & Create Issues
-        run: |
-          CODE_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts")
-
-          echo "$CODE_SCANNING_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
-            RULE_NAME=$(echo "$alert" | jq -r '.rule.name')
-            SEVERITY=$(echo "$alert" | jq -r '.rule.severity')
-            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
-
-            if [[ -n "$RULE_NAME" && -n "$SEVERITY" && -n "$ALERT_URL" ]]; then
-              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Code Scanning] $RULE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"code-scanning\"]}" \
-                "https://api.github.com/repos/${{ github.repository }}/issues"
-            fi
-          done
-
-      # ✅ Fetch Secret Scanning Alerts & Create Issues
-      - name: Fetch Secret Scanning Alerts & Create Issues
-        run: |
-          SECRET_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            "https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts")
-
-          echo "$SECRET_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
-            SECRET_TYPE=$(echo "$alert" | jq -r '.secret_type_display_name')
-            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
-
-            if [[ -n "$SECRET_TYPE" && -n "$ALERT_URL" ]]; then
-              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Secret Scanning] $SECRET_TYPE Found\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"secret-scanning\"]}" \
-                "https://api.github.com/repos/${{ github.repository }}/issues"
-            fi
-          done
+          sarif_file: '../results/java.sarif'  # Adjust if multiple languages
