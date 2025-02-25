@@ -1,4 +1,4 @@
-name: Trivy & Security Alerts with Issue Creation
+name: Trivy & Security Alerts with Issue Creation 
 
 on:
   push:
