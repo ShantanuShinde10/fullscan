@@ -1,4 +1,4 @@
-name: Trivy & GitHub Advanced Security Scan
+name: Security Scans & Issue Creation
 
 on:
   push:
@@ -24,8 +24,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ✅ Run Trivy Vulnerability Scanner
-      - name: Run Trivy Security Scan
+      # ✅ Run Trivy Scan (Vulnerabilities, Secrets, Config Issues)
+      - name: Run Trivy Full Security Scan
         uses: aquasecurity/trivy-action@0.11.0
         with:
           scan-type: 'fs'
@@ -33,6 +33,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
+          scanners: 'vuln,secret,config'
+          ignore-unfixed: true
 
       # ✅ Upload Trivy Scan Results to GitHub Security Tab
       - name: Upload Trivy Scan Results
@@ -40,20 +42,27 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # ✅ Initialize CodeQL for Code Scanning
+      # ✅ Initialize CodeQL for Static Code Analysis
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: python  # Change this based on your repo languages
-          build-mode: none  # Set "none" if your project doesn't require a build step
+          languages: 'python'  # Adjust for your repository (e.g., python, javascript, java)
+          config-file: ./.github/codeql-config.yml
 
       # ✅ Run CodeQL Analysis
       - name: Run CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
           upload: always
+          output: '../results'
 
-      # ✅ Fetch Dependabot Alerts & Create Issues
+      # ✅ Upload CodeQL Results to GitHub Security Tab
+      - name: Upload CodeQL Results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: '../results'
+
+      # ✅ Fetch & Create Issues for Dependabot Alerts
       - name: Fetch Dependabot Alerts & Create Issues
         run: |
           DEPENDABOT_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
@@ -73,10 +82,12 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 -d "{\"title\":\"[Dependabot] Security Issue: $PACKAGE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"dependabot\"]}" \
                 "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
             fi
           done
 
-      # ✅ Fetch Code Scanning Alerts & Create Issues
+      # ✅ Fetch & Create Issues for Code Scanning Alerts
       - name: Fetch Code Scanning Alerts & Create Issues
         run: |
           CODE_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
@@ -96,27 +107,31 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 -d "{\"title\":\"[Code Scanning] $RULE_NAME ($SEVERITY)\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"code-scanning\"]}" \
                 "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
             fi
           done
 
-      # ✅ Fetch Secret Scanning Alerts & Create Issues
+      # ✅ Fetch & Create Issues for Secret Scanning Alerts
       - name: Fetch Secret Scanning Alerts & Create Issues
         run: |
-          SECRET_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
+          SECRET_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts")
 
           echo "Fetched Secret Scanning Alerts:"
-          echo "$SECRET_SCANNING_ALERTS" | jq .
+          echo "$SECRET_ALERTS" | jq .
 
-          echo "$SECRET_SCANNING_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
+          echo "$SECRET_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
             SECRET_TYPE=$(echo "$alert" | jq -r '.secret_type')
             ALERT_URL=$(echo "$alert" | jq -r '.html_url')
 
             if [[ -n "$SECRET_TYPE" && -n "$ALERT_URL" ]]; then
-              echo "Creating GitHub Issue for $SECRET_TYPE..."
+              echo "Creating GitHub Issue for Secret Leak: $SECRET_TYPE..."
               curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Secret Scanning] Detected Secret: $SECRET_TYPE\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"secret-scanning\"]}" \
+                -d "{\"title\":\"[Secret Scanning] Leaked Secret: $SECRET_TYPE\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"secret-scanning\"]}" \
                 "https://api.github.com/repos/${{ github.repository }}/issues"
+            else
+              echo "Skipping issue creation due to missing data."
             fi
           done
