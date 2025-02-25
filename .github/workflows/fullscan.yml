@@ -12,7 +12,7 @@ on:
 
 permissions:
   security-events: write  # Upload SARIF reports
-  contents: read          # Read repo contents
+  contents: read          # Scan repo contents
   issues: write           # Create GitHub issues
 
 jobs:
@@ -24,8 +24,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 🔹 Run Trivy for Code, Dependencies, and Secrets
-      - name: Run Trivy Security Scanner
+      # 🔹 Run Trivy Security Scanner
+      - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@0.11.0
         with:
           scan-type: 'fs'  
@@ -33,14 +33,15 @@ jobs:
           format: 'sarif'   
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
-          scanners: 'vuln,secret,misconfig,license,config,code'  # 🔹 Includes code scanning!
+          scanners: 'vuln,secret,config,license,code'  # ✅ Removed `misconfig`
 
-      - name: Upload Trivy Scan Results to GitHub Security Tab
+      # 🔹 Upload Trivy Results to GitHub Security Tab
+      - name: Upload Trivy Scan Results
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # 🔹 Fetch Dependabot Alerts & Create Issues
+      # 🔹 Create Issues for Dependabot Alerts
       - name: Fetch Dependabot Alerts & Create Issues
         run: |
           DEPENDABOT_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
@@ -63,46 +64,24 @@ jobs:
             fi
           done
 
-      # 🔹 Fetch Code Scanning Alerts & Create Issues
+      # 🔹 Create Issues for Code Scanning Alerts
       - name: Fetch Code Scanning Alerts & Create Issues
         run: |
-          CODE_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
+          CODE_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts")
 
           echo "Fetched Code Scanning Alerts:"
-          echo "$CODE_SCANNING_ALERTS" | jq .
+          echo "$CODE_ALERTS" | jq .
 
-          echo "$CODE_SCANNING_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
+          echo "$CODE_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
             RULE_NAME=$(echo "$alert" | jq -r '.rule.name')
             ALERT_URL=$(echo "$alert" | jq -r '.html_url')
 
             if [[ -n "$RULE_NAME" && -n "$ALERT_URL" ]]; then
-              echo "Creating GitHub Issue for $RULE_NAME..."
+              echo "Creating GitHub Issue for Code Scanning Alert: $RULE_NAME..."
               curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Code Scanning] $RULE_NAME\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"code-scanning\"]}" \
-                "https://api.github.com/repos/${{ github.repository }}/issues"
-            fi
-          done
-
-      # 🔹 Fetch Secret Scanning Alerts & Create Issues
-      - name: Fetch Secret Scanning Alerts & Create Issues
-        run: |
-          SECRET_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            "https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts")
-
-          echo "Fetched Secret Scanning Alerts:"
-          echo "$SECRET_SCANNING_ALERTS" | jq .
-
-          echo "$SECRET_SCANNING_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
-            SECRET_TYPE=$(echo "$alert" | jq -r '.secret_type')
-            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
-
-            if [[ -n "$SECRET_TYPE" && -n "$ALERT_URL" ]]; then
-              echo "Creating GitHub Issue for $SECRET_TYPE..."
-              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Secret Scanning] $SECRET_TYPE Detected\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"secret-scanning\"]}" \
+                -d "{\"title\":\"[Code Scanning] Issue: $RULE_NAME\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"code-scanning\"]}" \
                 "https://api.github.com/repos/${{ github.repository }}/issues"
             fi
           done
