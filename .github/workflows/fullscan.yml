@@ -24,17 +24,33 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ✅ Run GitHub Code Scanning
+      # ✅ Step 1: Initialize GitHub CodeQL
+      - name: Initialize GitHub CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, python, java  # Change based on your project
+          config-file: ./.github/codeql-config.yml  # Optional custom config
+
+      # ✅ Step 2: Perform Code Scanning
       - name: Run GitHub Code Scanning (CodeQL)
         uses: github/codeql-action/analyze@v3
+        with:
+          output: results
+          upload: always
+          cleanup-level: brutal
+          add-snippets: false
+          skip-queries: false
+          upload-database: true
+          wait-for-processing: true
+          token: ${{ secrets.GH_PAT }}
 
-      # 🔹 Fetch Dependabot Alerts & Create Issues
+      # 🔹 Step 3: Fetch Dependabot Alerts & Create Issues
       - name: Fetch Dependabot Alerts & Create Issues
         run: |
           DEPENDABOT_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/dependabot/alerts")
 
-          echo "$DEPENDABOT_ALERTS" | jq . 
+          echo "$DEPENDABOT_ALERTS" | jq .
 
           echo "$DEPENDABOT_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
             PACKAGE_NAME=$(echo "$alert" | jq -r '.dependency.package.name')
@@ -49,33 +65,13 @@ jobs:
             fi
           done
 
-      # 🔹 Fetch Code Scanning Alerts & Create Issues
-      - name: Fetch Code Scanning Alerts & Create Issues
-        run: |
-          CODE_SCANNING_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts")
-
-          echo "$CODE_SCANNING_ALERTS" | jq . 
-
-          echo "$CODE_SCANNING_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
-            RULE_NAME=$(echo "$alert" | jq -r '.rule.id')
-            ALERT_URL=$(echo "$alert" | jq -r '.html_url')
-
-            if [[ -n "$RULE_NAME" && -n "$ALERT_URL" ]]; then
-              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d "{\"title\":\"[Code Scanning] Security Issue: $RULE_NAME\", \"body\":\"[View Alert]($ALERT_URL)\", \"labels\":[\"security\", \"code-scanning\"]}" \
-                "https://api.github.com/repos/${{ github.repository }}/issues"
-            fi
-          done
-
-      # 🔹 Fetch Secret Scanning Alerts & Create Issues
+      # 🔹 Step 4: Fetch Secret Scanning Alerts & Create Issues
       - name: Fetch Secret Scanning Alerts & Create Issues
         run: |
           SECRET_ALERTS=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts")
 
-          echo "$SECRET_ALERTS" | jq . 
+          echo "$SECRET_ALERTS" | jq .
 
           echo "$SECRET_ALERTS" | jq -c '.[]' | while IFS= read -r alert; do
             SECRET_TYPE=$(echo "$alert" | jq -r '.secret_type')
