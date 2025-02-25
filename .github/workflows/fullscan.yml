@@ -47,7 +47,7 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: 'python'  # Adjust for your repository (e.g., python, javascript, java)
-          config-file: ./.github/codeql-config.yml
+          
 
       # ✅ Run CodeQL Analysis
       - name: Run CodeQL Analysis
