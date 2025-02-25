@@ -1,4 +1,4 @@
-name: Code Scanning with CodeQL
+name: SonarQube & Trivy Security Scans
 
 on:
   push:
@@ -13,41 +13,70 @@ on:
 permissions:
   security-events: write
   contents: read
+  issues: write
 
 jobs:
-  codeql-scan:
-    name: Run CodeQL Analysis (Python)
+  security-scan:
+    name: Run SonarQube & Trivy Scans
     runs-on: ubuntu-latest
 
     steps:
+      # ✅ Checkout the Repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      ## 🔹 Set up Python environment
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      # 🔹 SonarQube Scan for Code Analysis
+      - name: SonarQube Code Analysis
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: "https://sonarcloud.io"  # Change this if using self-hosted SonarQube
+
+      # 🔹 Trivy File System Scan (Code Scanning)
+      - name: Run Trivy Code & Secret Scanning
+        uses: aquasecurity/trivy-action@0.11.0
         with:
-          python-version: '3.x'  # Use the required Python version
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          scanners: 'vuln,secret'  # Scan for vulnerabilities & secrets
+          severity: 'CRITICAL,HIGH'
 
-      - name: Install dependencies
-        run: |
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
-
-      ## 🔹 Initialize CodeQL for Python
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: python
-
-      ## 🔹 Perform CodeQL Analysis
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
-      ## 🔹 Upload CodeQL Results to GitHub Security Tab
-      - name: Upload CodeQL Scan Results
+      # ✅ Upload Trivy SARIF Report to GitHub Code Scanning
+      - name: Upload Trivy Scan Results
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: '../results/python.sarif'  # Adjust if necessary
-          category: "python-codeql-scan"  # ✅ Fix: Unique category to prevent conflicts
+          sarif_file: 'trivy-results.sarif'
+
+      # 🔹 Trivy Container Image Scan
+      - name: Run Trivy Image Scanning
+        run: |
+          IMAGE_NAME="my-app:latest"
+          docker build -t $IMAGE_NAME .
+          trivy image --format sarif -o trivy-image-results.sarif --severity CRITICAL,HIGH $IMAGE_NAME
+
+      # ✅ Upload Trivy Image Scan Results to GitHub
+      - name: Upload Trivy Image Scan Results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+      # 🔹 Create GitHub Issues for Security Findings
+      - name: Create Issues for Trivy Findings
+        run: |
+          TRIVY_ALERTS=$(jq -c '.runs[].results[]' trivy-results.sarif 2>/dev/null || echo "[]")
+
+          echo "$TRIVY_ALERTS" | while IFS= read -r alert; do
+            RULE_ID=$(echo "$alert" | jq -r '.ruleId')
+            SEVERITY=$(echo "$alert" | jq -r '.level')
+            MESSAGE=$(echo "$alert" | jq -r '.message.text')
+            
+            if [[ -n "$RULE_ID" && -n "$SEVERITY" && -n "$MESSAGE" ]]; then
+              echo "Creating GitHub Issue for $RULE_ID..."
+              curl -X POST -H "Authorization: token ${{ secrets.GH_PAT }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -d "{\"title\":\"[Trivy] $RULE_ID ($SEVERITY)\", \"body\":\"$MESSAGE\", \"labels\":[\"security\", \"trivy\"]}" \
+                "https://api.github.com/repos/${{ github.repository }}/issues"
+            fi
+          done
